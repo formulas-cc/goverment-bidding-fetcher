@@ -547,18 +547,44 @@ def save_to_excel(all_results: dict, output_path: Path) -> None:
 
 
 # ──────────────────────────────────────────────
-# --set-cookie 子命令
+# 数据源凭证注册表
+# 新增数据源时在此处添加一条记录即可
 # ──────────────────────────────────────────────
 
-def cmd_set_cookie(bearer: str, session_str: str) -> None:
-    """解析并写入凭证到 .env 文件。"""
+# SOURCE_COOKIE_MAP[source_id] = {cookie_key_in_session_str: env_var_name}
+SOURCE_COOKIE_MAP = {
+    'zjcy': {
+        '_bearer':        'FETCHER_ZJCY_BEARER_TOKEN',
+        'YGCG_TBSESSION': 'FETCHER_ZJCY_TBSESSION',
+        'JSESSIONID':     'FETCHER_ZJCY_JSESSIONID',
+        'jcloud_alb_route': 'FETCHER_ZJCY_ALB_ROUTE',
+    },
+    # 后续新增示例：
+    # 'ccgp': {
+    #     '_bearer':   'FETCHER_CCGP_BEARER_TOKEN',
+    #     'SESSION_ID': 'FETCHER_CCGP_SESSION',
+    # },
+}
+
+
+# --set-cookie 子命令
+def cmd_set_cookie(source: str, bearer: str, session_str: str) -> None:
+    """解析并写入指定数据源的凭证到 .env 文件。"""
+    source = source.lower().strip()
+    if source not in SOURCE_COOKIE_MAP:
+        known = ', '.join(SOURCE_COOKIE_MAP.keys())
+        print(f'[error] 未知数据源 "{source}"，当前支持: {known}')
+        sys.exit(1)
+
+    cookie_map = SOURCE_COOKIE_MAP[source]
     updates = {}
 
     if bearer:
         token = bearer.strip()
         if token.lower().startswith('bearer '):
             token = token[7:].strip()
-        updates['FETCHER_ZJCY_BEARER_TOKEN'] = token
+        if '_bearer' in cookie_map:
+            updates[cookie_map['_bearer']] = token
 
     if session_str:
         for part in session_str.split(';'):
@@ -567,19 +593,15 @@ def cmd_set_cookie(bearer: str, session_str: str) -> None:
                 continue
             k, _, v = part.partition('=')
             k, v = k.strip(), v.strip()
-            if k == 'YGCG_TBSESSION':
-                updates['FETCHER_ZJCY_TBSESSION'] = v
-            elif k == 'JSESSIONID':
-                updates['FETCHER_ZJCY_JSESSIONID'] = v
-            elif k == 'jcloud_alb_route':
-                updates['FETCHER_ZJCY_ALB_ROUTE'] = v
+            if k in cookie_map:
+                updates[cookie_map[k]] = v
 
     if not updates:
         print('[error] 未能解析任何凭证，请检查 --bearer 和 --session 参数。')
         sys.exit(1)
 
     env_path = save_to_env(updates)
-    print(f'[ok] 凭证已写入: {env_path}')
+    print(f'[ok] [{source}] 凭证已写入: {env_path}')
     for k, v in updates.items():
         print(f'  {k} = {v[:12]}...' if len(v) > 12 else f'  {k} = {v}')
 
@@ -597,6 +619,8 @@ def main() -> None:
     # 凭证更新子命令
     parser.add_argument('--set-cookie', action='store_true',
                         help='更新 .env 中的凭证信息（不执行抓取）')
+    parser.add_argument('--source', default='zjcy',
+                        help=f'数据源标识，与 --set-cookie 配合使用，可选: {", ".join(SOURCE_COOKIE_MAP.keys())}（默认: zjcy）')
     parser.add_argument('--bearer', default='',
                         help='Bearer token，格式："Bearer xxx" 或 "xxx"')
     parser.add_argument('--session', default='',
@@ -624,7 +648,7 @@ def main() -> None:
 
     # 凭证更新模式
     if args.set_cookie:
-        cmd_set_cookie(args.bearer, args.session)
+        cmd_set_cookie(args.source, args.bearer, args.session)
         return
 
     # 确定目标日期
