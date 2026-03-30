@@ -97,88 +97,67 @@ def _fetch_bjzc_page(session: requests.Session, page: int, rows: int = 100) -> d
     return resp.json()
 
 
-def _fetch_bjzc_bd_list(session: requests.Session, gg_guid: str) -> list:
-    """获取公告下的分包列表，返回含 bdGuid 的 list。"""
-    url = f'{BASE_URL}/cggg/gonggao/queryZBGongGaoBDListWin.do'
+def _fetch_bjzc_gg_bd_list(session: requests.Session, gg_guid: str) -> list:
+    """
+    获取公告下的分包列表（queryGgBdList）。
+    每条记录含 bdGuid、文件获取时间、开标时间等关键字段。
+    """
+    url = f'{BASE_URL}/cggg/gonggao/queryGgBdList.do'
     params = {'_t': _t(), 'ggGuid': gg_guid}
     try:
         resp = session.get(url, params=params, timeout=15)
         _refresh_session_cookie(session)
         data = resp.json()
-        # 兼容多种响应结构
-        if isinstance(data, list):
-            return data
         if isinstance(data, dict):
-            for key in ('data', 'rows', 'list', 'result'):
-                if isinstance(data.get(key), list):
-                    return data[key]
+            # 响应结构：{"data": {"ggBdList": [...]}}
+            inner = data.get('data', {})
+            if isinstance(inner, dict):
+                bd_list = inner.get('ggBdList', [])
+                if isinstance(bd_list, list):
+                    return bd_list
     except Exception as e:
         print(f'  [warn] 获取分包列表失败 ggGuid={gg_guid}: {e}')
     return []
 
 
-def _fetch_bjzc_basic_info(session: requests.Session, bd_guid: str) -> dict:
-    """获取招标进度基本信息（预算、时间节点等）。"""
-    url = f'{BASE_URL}/zbProgress/zbProgressBaseInfo.do'
-    params = {'_t': _t(), 'bdGuid': bd_guid}
-    try:
-        resp = session.get(url, params=params, timeout=15)
-        _refresh_session_cookie(session)
-        data = resp.json()
-        if isinstance(data, dict):
-            for key in ('data', 'result'):
-                if isinstance(data.get(key), dict):
-                    return data[key]
-            return data
-    except Exception as e:
-        print(f'  [warn] 获取基本信息失败 bdGuid={bd_guid}: {e}')
-    return {}
-
-
 def _fetch_bjzc_purchaser_info(session: requests.Session, gc_guid: str) -> dict:
-    """获取采购人及代理机构信息。"""
+    """
+    获取采购人及代理机构信息（queryPurchaserInfo）。
+    确认字段：zbRName、lianXiRenPhone、zbDLName、zbDLZBFuZeRenMobile/zbDLZBFuZeRenPhone
+    """
     url = f'{BASE_URL}/cggg/gonggao/queryPurchaserInfo.do'
     params = {'_t': _t(), 'gcGuid': gc_guid}
     try:
         resp = session.get(url, params=params, timeout=15)
         _refresh_session_cookie(session)
         data = resp.json()
-        if isinstance(data, dict):
-            for key in ('data', 'result'):
-                if isinstance(data.get(key), dict):
-                    return data[key]
-            return data
+        if isinstance(data, dict) and isinstance(data.get('data'), dict):
+            return data['data']
     except Exception as e:
         print(f'  [warn] 获取采购人信息失败 gcGuid={gc_guid}: {e}')
     return {}
 
 
 def _fetch_bjzc_project_overview(session: requests.Session, gc_guid: str, gg_guid: str) -> str:
-    """获取项目概况文本（截取前 100 字）。"""
+    """
+    获取项目概况文本（projectOverview）。
+    尝试字段：ggNeiRong、zbGkfw、zbRequire（按优先级取第一个非空值）
+    """
     url = f'{BASE_URL}/cggg/gonggao/projectOverview.do'
     params = {'_t': _t(), 'gcGuid': gc_guid, 'ggGuid': gg_guid}
     try:
         resp = session.get(url, params=params, timeout=15)
         _refresh_session_cookie(session)
         data = resp.json()
+        inner = data.get('data', {}) if isinstance(data, dict) else {}
         text = ''
-        if isinstance(data, dict):
-            for key in ('data', 'result', 'content', 'overview', 'gcgk', 'projectOverview'):
-                val = data.get(key)
-                if isinstance(val, str) and val.strip():
-                    text = val.strip()
-                    break
-                if isinstance(val, dict):
-                    for sub_key in ('content', 'overview', 'text', 'gcgk'):
-                        sub_val = val.get(sub_key, '')
-                        if isinstance(sub_val, str) and sub_val.strip():
-                            text = sub_val.strip()
-                            break
-                    if text:
-                        break
-        # 清洗 HTML 标签
+        for field in ('ggNeiRong', 'zbGkfw', 'zbRequire', 'bgContent'):
+            val = inner.get(field)
+            if isinstance(val, str) and val.strip():
+                text = val.strip()
+                break
         text = re.sub(r'<[^>]+>', '', text)
-        text = re.sub(r'&[a-zA-Z]+;', ' ', text)
+        text = re.sub(r'&[a-zA-Z#0-9]+;', ' ', text)
         text = re.sub(r'\s+', ' ', text).strip()
         return text[:100] if text else ''
     except Exception as e:
@@ -348,7 +327,7 @@ def fetch_bjzc_bidding(
             '项目名称': title,
             '标段名称': row.get('bdNames', ''),
             '招标方式': row.get('zbFangShiName', ''),
-            '预算金额': '',
+            '合同估价(元)': '',
             '文件获取开始时间': '',
             '文件获取截止时间': '',
             '开标时间': '',
@@ -370,54 +349,38 @@ def fetch_bjzc_bidding(
 
         print(f'  [{idx}/{len(filtered)}] 补全详情: {title[:30]}...')
 
-        # Step1: 获取分包列表
-        bd_list = _fetch_bjzc_bd_list(session, gg_guid)
+        # Step1: queryGgBdList — 分包列表 + 文件获取时间 + 开标时间
+        bd_list = _fetch_bjzc_gg_bd_list(session, gg_guid)
         if not bd_list:
-            bd_list = [{}]  # 保证至少一行
+            bd_list = [{}]
 
-        # Step3: 采购人信息（每个公告只查一次）
+        # Step2: queryPurchaserInfo — 采购人 + 代理机构（每个公告只查一次）
         purchaser_info = _fetch_bjzc_purchaser_info(session, gc_guid) if gc_guid else {}
-        purchaser_name = _extract_field(purchaser_info,
-            'purchaserName', 'cgr', 'cgrName', 'purchaser', 'name', 'cgdwmc')
-        purchaser_phone = _extract_field(purchaser_info,
-            'purchaserPhone', 'tel', 'phone', 'cgrdh', 'lxdh')
-        agency_name = _extract_field(purchaser_info,
-            'agencyName', 'dlJg', 'agentName', 'dljgmc', 'agency')
-        agency_phone = _extract_field(purchaser_info,
-            'agencyPhone', 'agentPhone', 'dlJgTel', 'dljgdh')
+        purchaser_name  = purchaser_info.get('zbRName', '')
+        purchaser_phone = purchaser_info.get('lianXiRenPhone', '')
+        agency_name     = purchaser_info.get('zbDLName', '')
+        # 代理机构电话：优先手机，其次座机
+        agency_phone = (purchaser_info.get('zbDLZBFuZeRenMobile')
+                        or purchaser_info.get('zbDLZBFuZeRenPhone') or '')
 
-        # Step4: 项目概况（每个公告只查一次）
+        # Step3: projectOverview — 项目概况（每个公告只查一次）
         overview = _fetch_bjzc_project_overview(session, gc_guid, gg_guid) if gc_guid else ''
 
         for bd in bd_list:
-            bd_guid = _extract_field(bd, 'bdGuid', 'ggBDGuid', 'id')
+            bd_guid = bd.get('bdGuid', '')
 
-            # Step2: 招标进度基本信息
-            basic = _fetch_bjzc_basic_info(session, bd_guid) if bd_guid else {}
-            budget = _extract_field(basic,
-                'zbMoney', 'budgetAmount', 'budget', 'ysje', 'zbjeMoney', 'zbje',
-                'prePrice', 'estimatedAmount')
-            file_start = _extract_field(basic,
-                'fileStartTime', 'docStartTime', 'wjljStartTime', 'getLimitStart')
-            file_end = _extract_field(basic,
-                'fileEndTime', 'docEndTime', 'wjljEndTime', 'getLimitEnd', 'deadline')
-            open_bid = _extract_field(basic,
-                'openBidTime', 'kbTime', 'openTime', 'zbkbTime', 'bidOpenTime')
+            # 从 queryGgBdList 响应直接取时间字段（毫秒时间戳）
+            file_start = _ts_to_datetime(bd.get('zbWJHuoQuStartTime'))
+            file_end   = _ts_to_datetime(bd.get('zbWJHuoQuEndTime'))
+            open_bid   = _ts_to_datetime(bd.get('kbTime'))
 
-            # 时间戳转换
-            for val, key in [(file_start, None), (file_end, None), (open_bid, None)]:
-                pass  # 若是毫秒时间戳则转换
-            file_start = _ts_to_datetime(file_start) if file_start.isdigit() else file_start
-            file_end   = _ts_to_datetime(file_end) if file_end.isdigit() else file_end
-            open_bid   = _ts_to_datetime(open_bid) if open_bid.isdigit() else open_bid
-
-            # 详情链接
             detail_url = _build_detail_url(bd_guid, gc_guid, gg_guid) if bd_guid else ''
 
             record = dict(base_record)
+            contract_price = bd.get('bdHeTongGuJia')
             record.update({
-                '标段名称': _extract_field(bd, 'bdName', 'bdNames') or base_record['标段名称'],
-                '预算金额': budget,
+                '标段名称': bd.get('bdName') or base_record['标段名称'],
+                '合同估价(元)': contract_price if contract_price else '',
                 '文件获取开始时间': file_start,
                 '文件获取截止时间': file_end,
                 '开标时间': open_bid,
@@ -471,7 +434,7 @@ COLUMNS = [
     ('项目名称',        55),
     ('标段名称',        40),
     ('招标方式',        12),
-    ('预算金额',        15),
+    ('合同估价(元)',    15),
     ('文件获取开始时间', 18),
     ('文件获取截止时间', 18),
     ('开标时间',        18),
