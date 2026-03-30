@@ -20,7 +20,7 @@ from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 
 from govb_fetcher.config import (
     get_keywords, get_exclude_keywords, get_high_value_keywords,
-    get_zjcy_bearer_token, get_zjcy_tbsession, get_zjcy_jsessionid, get_zjcy_alb_route,
+    get_bjzc_bearer_token, get_bjzc_tbsession, get_bjzc_jsessionid, get_bjzc_alb_route,
     get_output_dir, save_to_env,
 )
 
@@ -35,15 +35,15 @@ DETAIL_BASE = 'http://zbcg-bjzc.zhongcy.com/bjczj-jy-toubiao/index.html'
 def _build_session() -> requests.Session:
     session = requests.Session()
     session.cookies.update({
-        'YGCG_TBSESSION': get_zjcy_tbsession(),
-        'JSESSIONID': get_zjcy_jsessionid(),
-        'jcloud_alb_route': get_zjcy_alb_route(),
+        'YGCG_TBSESSION': get_bjzc_tbsession(),
+        'JSESSIONID': get_bjzc_jsessionid(),
+        'jcloud_alb_route': get_bjzc_alb_route(),
     })
     session.headers.update({
         'Accept': 'application/json, text/plain, */*',
         'Accept-Encoding': 'gzip, deflate',
         'Accept-Language': 'zh-CN,zh;q=0.9',
-        'Authorization': f'Bearer {get_zjcy_bearer_token()}',
+        'Authorization': f'Bearer {get_bjzc_bearer_token()}',
         'Cache-Control': 'no-cache',
         'Connection': 'keep-alive',
         'Content-Type': 'application/x-www-form-urlencoded',
@@ -72,7 +72,7 @@ def _refresh_session_cookie(session: requests.Session) -> None:
         session.cookies.set('YGCG_TBSESSION', latest)
         # 自动写回 .env，保证下次启动时使用最新值
         try:
-            save_to_env({'FETCHER_ZJCY_TBSESSION': latest})
+            save_to_env({'FETCHER_BJZC_TBSESSION': latest})
         except Exception:
             pass
 
@@ -85,7 +85,7 @@ def _t() -> int:
 # 北京中建云智政府采购网
 # ──────────────────────────────────────────────
 
-def _fetch_zjcy_page(session: requests.Session, page: int, rows: int = 100) -> dict:
+def _fetch_bjzc_page(session: requests.Session, page: int, rows: int = 100) -> dict:
     url = f'{BASE_URL}/cggg/gonggao/queryZBGongGaoList.do'
     data = {
         'ggName': '', 'gcBH': '', 'gcName': '',
@@ -97,7 +97,7 @@ def _fetch_zjcy_page(session: requests.Session, page: int, rows: int = 100) -> d
     return resp.json()
 
 
-def _fetch_zjcy_bd_list(session: requests.Session, gg_guid: str) -> list:
+def _fetch_bjzc_bd_list(session: requests.Session, gg_guid: str) -> list:
     """获取公告下的分包列表，返回含 bdGuid 的 list。"""
     url = f'{BASE_URL}/cggg/gonggao/queryZBGongGaoBDListWin.do'
     params = {'_t': _t(), 'ggGuid': gg_guid}
@@ -117,7 +117,7 @@ def _fetch_zjcy_bd_list(session: requests.Session, gg_guid: str) -> list:
     return []
 
 
-def _fetch_zjcy_basic_info(session: requests.Session, bd_guid: str) -> dict:
+def _fetch_bjzc_basic_info(session: requests.Session, bd_guid: str) -> dict:
     """获取招标进度基本信息（预算、时间节点等）。"""
     url = f'{BASE_URL}/zbProgress/zbProgressBaseInfo.do'
     params = {'_t': _t(), 'bdGuid': bd_guid}
@@ -135,7 +135,7 @@ def _fetch_zjcy_basic_info(session: requests.Session, bd_guid: str) -> dict:
     return {}
 
 
-def _fetch_zjcy_purchaser_info(session: requests.Session, gc_guid: str) -> dict:
+def _fetch_bjzc_purchaser_info(session: requests.Session, gc_guid: str) -> dict:
     """获取采购人及代理机构信息。"""
     url = f'{BASE_URL}/cggg/gonggao/queryPurchaserInfo.do'
     params = {'_t': _t(), 'gcGuid': gc_guid}
@@ -153,7 +153,7 @@ def _fetch_zjcy_purchaser_info(session: requests.Session, gc_guid: str) -> dict:
     return {}
 
 
-def _fetch_zjcy_project_overview(session: requests.Session, gc_guid: str, gg_guid: str) -> str:
+def _fetch_bjzc_project_overview(session: requests.Session, gc_guid: str, gg_guid: str) -> str:
     """获取项目概况文本（截取前 100 字）。"""
     url = f'{BASE_URL}/cggg/gonggao/projectOverview.do'
     params = {'_t': _t(), 'gcGuid': gc_guid, 'ggGuid': gg_guid}
@@ -284,7 +284,7 @@ def _generate_remarks(title: str, matched_kw: list) -> str:
 # 北京中建云智 主抓取流程
 # ──────────────────────────────────────────────
 
-def fetch_zjcy_bidding(
+def fetch_bjzc_bidding(
     session: requests.Session,
     target_date: str,
     keywords: list,
@@ -302,12 +302,12 @@ def fetch_zjcy_bidding(
     day_end   = int(datetime(d.year, d.month, d.day, 23, 59, 59).timestamp() * 1000)
 
     # 1. 抓取当日列表
-    print(f'[zjcy] 抓取日期 {target_date}，逐页获取列表...')
+    print(f'[bjzc] 抓取日期 {target_date}，逐页获取列表...')
     raw_rows = []
     page = 1
     while True:
         print(f'  第 {page} 页...', end=' ', flush=True)
-        result = _fetch_zjcy_page(session, page)
+        result = _fetch_bjzc_page(session, page)
         if not result.get('success') or not result.get('data', {}).get('rows'):
             print('无数据，停止')
             break
@@ -329,11 +329,11 @@ def fetch_zjcy_bidding(
             break
         page += 1
 
-    print(f'[zjcy] 当日原始记录 {len(raw_rows)} 条，开始关键词过滤...')
+    print(f'[bjzc] 当日原始记录 {len(raw_rows)} 条，开始关键词过滤...')
 
     # 2. 关键词过滤
     filtered = _filter_by_keywords(raw_rows, keywords, exclude_kw)
-    print(f'[zjcy] 过滤后剩余 {len(filtered)} 条，{"开始补全详情..." if fetch_detail else "跳过详情补全"}')
+    print(f'[bjzc] 过滤后剩余 {len(filtered)} 条，{"开始补全详情..." if fetch_detail else "跳过详情补全"}')
 
     # 3. 详情补全
     results = []
@@ -371,12 +371,12 @@ def fetch_zjcy_bidding(
         print(f'  [{idx}/{len(filtered)}] 补全详情: {title[:30]}...')
 
         # Step1: 获取分包列表
-        bd_list = _fetch_zjcy_bd_list(session, gg_guid)
+        bd_list = _fetch_bjzc_bd_list(session, gg_guid)
         if not bd_list:
             bd_list = [{}]  # 保证至少一行
 
         # Step3: 采购人信息（每个公告只查一次）
-        purchaser_info = _fetch_zjcy_purchaser_info(session, gc_guid) if gc_guid else {}
+        purchaser_info = _fetch_bjzc_purchaser_info(session, gc_guid) if gc_guid else {}
         purchaser_name = _extract_field(purchaser_info,
             'purchaserName', 'cgr', 'cgrName', 'purchaser', 'name', 'cgdwmc')
         purchaser_phone = _extract_field(purchaser_info,
@@ -387,13 +387,13 @@ def fetch_zjcy_bidding(
             'agencyPhone', 'agentPhone', 'dlJgTel', 'dljgdh')
 
         # Step4: 项目概况（每个公告只查一次）
-        overview = _fetch_zjcy_project_overview(session, gc_guid, gg_guid) if gc_guid else ''
+        overview = _fetch_bjzc_project_overview(session, gc_guid, gg_guid) if gc_guid else ''
 
         for bd in bd_list:
             bd_guid = _extract_field(bd, 'bdGuid', 'ggBDGuid', 'id')
 
             # Step2: 招标进度基本信息
-            basic = _fetch_zjcy_basic_info(session, bd_guid) if bd_guid else {}
+            basic = _fetch_bjzc_basic_info(session, bd_guid) if bd_guid else {}
             budget = _extract_field(basic,
                 'zbMoney', 'budgetAmount', 'budget', 'ysje', 'zbjeMoney', 'zbje',
                 'prePrice', 'estimatedAmount')
@@ -450,7 +450,7 @@ def fetch_all_bidding(
 
     session = _build_session()
 
-    zjcy_results = fetch_zjcy_bidding(
+    bjzc_results = fetch_bjzc_bidding(
         session, target_date, keywords, exclude_kw, high_value_kw, fetch_detail
     )
 
@@ -458,7 +458,7 @@ def fetch_all_bidding(
     # other_results = fetch_other_site(session, target_date, ...)
 
     return {
-        '北京中建云智政府采购网': zjcy_results,
+        '北京中建云智政府采购网': bjzc_results,
     }
 
 
@@ -553,11 +553,11 @@ def save_to_excel(all_results: dict, output_path: Path) -> None:
 
 # SOURCE_COOKIE_MAP[source_id] = {cookie_key_in_session_str: env_var_name}
 SOURCE_COOKIE_MAP = {
-    'zjcy': {
-        '_bearer':        'FETCHER_ZJCY_BEARER_TOKEN',
-        'YGCG_TBSESSION': 'FETCHER_ZJCY_TBSESSION',
-        'JSESSIONID':     'FETCHER_ZJCY_JSESSIONID',
-        'jcloud_alb_route': 'FETCHER_ZJCY_ALB_ROUTE',
+    'bjzc': {
+        '_bearer':        'FETCHER_BJZC_BEARER_TOKEN',
+        'YGCG_TBSESSION': 'FETCHER_BJZC_TBSESSION',
+        'JSESSIONID':     'FETCHER_BJZC_JSESSIONID',
+        'jcloud_alb_route': 'FETCHER_BJZC_ALB_ROUTE',
     },
     # 后续新增示例：
     # 'ccgp': {
@@ -619,8 +619,8 @@ def main() -> None:
     # 凭证更新子命令
     parser.add_argument('--set-cookie', action='store_true',
                         help='更新 .env 中的凭证信息（不执行抓取）')
-    parser.add_argument('--source', default='zjcy',
-                        help=f'数据源标识，与 --set-cookie 配合使用，可选: {", ".join(SOURCE_COOKIE_MAP.keys())}（默认: zjcy）')
+    parser.add_argument('--source', default='bjzc',
+                        help=f'数据源标识，与 --set-cookie 配合使用，可选: {", ".join(SOURCE_COOKIE_MAP.keys())}（默认: bjzc）')
     parser.add_argument('--bearer', default='',
                         help='Bearer token，格式："Bearer xxx" 或 "xxx"')
     parser.add_argument('--session', default='',

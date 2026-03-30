@@ -3,7 +3,7 @@
 
 命名规范：FETCHER_{SOURCE}_{PARAM}
   - 通用参数：FETCHER_KEYWORDS / FETCHER_EXCLUDE_KEYWORDS / ...
-  - 北京中建云智：FETCHER_ZJCY_BEARER_TOKEN / FETCHER_ZJCY_TBSESSION / ...
+  - 北京中建云智：FETCHER_BJZC_BEARER_TOKEN / FETCHER_BJZC_TBSESSION / ...
   - 后续新增数据源：FETCHER_CCGP_xxx / FETCHER_BJGP_xxx / ...
 
 优先级（高→低）：
@@ -87,22 +87,22 @@ def get_output_dir() -> Path:
     return Path(get_config('FETCHER_OUTPUT_DIR')).expanduser()
 
 
-# ── 北京中建云智（ZJCY）凭证 ───────────────────
+# ── 北京中建云智（BJZC）凭证 ───────────────────
 
-def get_zjcy_bearer_token() -> str:
-    return get_config('FETCHER_ZJCY_BEARER_TOKEN')
-
-
-def get_zjcy_tbsession() -> str:
-    return get_config('FETCHER_ZJCY_TBSESSION')
+def get_bjzc_bearer_token() -> str:
+    return get_config('FETCHER_BJZC_BEARER_TOKEN')
 
 
-def get_zjcy_jsessionid() -> str:
-    return get_config('FETCHER_ZJCY_JSESSIONID')
+def get_bjzc_tbsession() -> str:
+    return get_config('FETCHER_BJZC_TBSESSION')
 
 
-def get_zjcy_alb_route() -> str:
-    return get_config('FETCHER_ZJCY_ALB_ROUTE')
+def get_bjzc_jsessionid() -> str:
+    return get_config('FETCHER_BJZC_JSESSIONID')
+
+
+def get_bjzc_alb_route() -> str:
+    return get_config('FETCHER_BJZC_ALB_ROUTE')
 
 
 # ── .env 文件操作 ───────────────────────────────

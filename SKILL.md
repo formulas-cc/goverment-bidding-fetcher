@@ -9,8 +9,8 @@ metadata: {"openclaw":{"emoji":"🏛️","requires":{govb-fetcher},"install":"uv
 ### 快速开始
 
 ```bash
-# 首次使用：写入登录凭证（--source 指定数据源，默认 zjcy）
-govb-fetcher --set-cookie --source zjcy --bearer "Bearer xxx" --session "YGCG_TBSESSION=xxx; JSESSIONID=xxx; jcloud_alb_route=xxx"
+# 首次使用：写入登录凭证（--source 指定数据源，默认 bjzc）
+govb-fetcher --set-cookie --source bjzc --bearer "Bearer xxx" --session "YGCG_TBSESSION=xxx; JSESSIONID=xxx; jcloud_alb_route=xxx"
 
 # 抓取今日数据
 govb-fetcher --today
@@ -57,8 +57,8 @@ govb-fetcher --date 2026-03-30      # 抓取指定日期
 
 **方式一：命令行更新**
 ```bash
-# --source 指定数据源（默认 zjcy；后续新增数据源时填对应标识）
-govb-fetcher --set-cookie --source zjcy \
+# --source 指定数据源（默认 bjzc；后续新增数据源时填对应标识）
+govb-fetcher --set-cookie --source bjzc \
   --bearer "Bearer 847f6d92-cce8-4f1a-a481-20bc93535219" \
   --session "YGCG_TBSESSION=ba4d5bad-xxx; JSESSIONID=8A2E7F...; jcloud_alb_route=600a4a10..."
 ```
