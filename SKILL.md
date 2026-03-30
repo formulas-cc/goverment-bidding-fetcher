@@ -62,4 +62,4 @@ metadata: {"openclaw":{"emoji":"🏛️","requires":{govb-fetcher},"install":"uv
 | `FETCHER_KEYWORDS` | 核心关键词，逗号分隔 |
 | `FETCHER_EXCLUDE_KEYWORDS` | 排除关键词，逗号分隔 |
 | `FETCHER_HIGH_VALUE_KEYWORDS` | 高价值关键词，逗号分隔 |
-| `FETCHER_OUTPUT_DIR` | Excel 输出目录（默认 `~/.openclaw/workspace/govb-fetcher`）|
+| `FETCHER_OUTPUT_DIR` | Excel 输出目录（默认 `~/.openclaw/workspace/govb-bidding`）|
