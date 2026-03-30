@@ -334,8 +334,6 @@ def fetch_bjzc_bidding(
             '采购人': '',
             '采购人电话': '',
             '代理机构': '',
-            '代理机构电话': '',
-            '项目概况': '',
             '详情链接': '',
             '发布日期': publish_date,
             '匹配关键词': ','.join(matched_kw),
@@ -363,9 +361,6 @@ def fetch_bjzc_bidding(
         agency_phone = (purchaser_info.get('zbDLZBFuZeRenMobile')
                         or purchaser_info.get('zbDLZBFuZeRenPhone') or '')
 
-        # Step3: projectOverview — 项目概况（每个公告只查一次）
-        overview = _fetch_bjzc_project_overview(session, gc_guid, gg_guid) if gc_guid else ''
-
         for bd in bd_list:
             bd_guid = bd.get('bdGuid', '')
 
@@ -387,8 +382,6 @@ def fetch_bjzc_bidding(
                 '采购人': purchaser_name,
                 '采购人电话': purchaser_phone,
                 '代理机构': agency_name,
-                '代理机构电话': agency_phone,
-                '项目概况': overview,
                 '详情链接': detail_url,
             })
             results.append(record)
@@ -441,8 +434,6 @@ COLUMNS = [
     ('采购人',          25),
     ('采购人电话',      15),
     ('代理机构',        25),
-    ('代理机构电话',    15),
-    ('项目概况',        50),
     ('详情链接',        80),
     ('发布日期',        12),
     ('匹配关键词',      20),
