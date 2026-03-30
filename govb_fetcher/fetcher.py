@@ -27,6 +27,10 @@ from govb_fetcher.config import (
 BASE_URL = 'http://zbcg-bjzc.zhongcy.com/gt-jy-toubiao/api'
 DETAIL_BASE = 'http://zbcg-bjzc.zhongcy.com/bjczj-jy-toubiao/index.html'
 
+HNZC_LIST_URL   = 'http://www.ccgp-hunan.gov.cn/mvc/getNoticeList4Web.do'
+HNZC_DETAIL_URL = 'http://www.ccgp-hunan.gov.cn/mvc/viewNoticeContent.do'
+HNZC_PAGE_URL   = 'http://www.ccgp-hunan.gov.cn/page/notice/noticeDetail.jsp'
+
 
 # ──────────────────────────────────────────────
 # Session 管理
@@ -197,6 +201,190 @@ def _extract_field(d: dict, *keys) -> str:
         if v is not None and str(v).strip() and str(v).strip() not in ('null', 'None', '0'):
             return str(v).strip()
     return ''
+
+
+# ──────────────────────────────────────────────
+# 湖南政府采购网（HNZC）
+# ──────────────────────────────────────────────
+
+def _build_hnzc_session() -> requests.Session:
+    session = requests.Session()
+    session.headers.update({
+        'Accept': 'application/json, text/javascript, */*; q=0.01',
+        'Accept-Encoding': 'gzip, deflate',
+        'Accept-Language': 'zh-CN,zh;q=0.9',
+        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+        'User-Agent': (
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+            'AppleWebKit/537.36 (KHTML, like Gecko) '
+            'Chrome/146.0.0.0 Safari/537.36'
+        ),
+        'X-Requested-With': 'XMLHttpRequest',
+    })
+    return session
+
+
+def _fetch_hnzc_page(session: requests.Session, target_date: str, page: int, page_size: int = 100) -> dict:
+    data = {
+        'nType': 'prcmNotices', 'pType': '', 'prcmPrjName': '',
+        'prcmItemCode': '', 'prcmOrgName': '', 'startDate': target_date,
+        'endDate': target_date, 'prcmPlanNo': '',
+        'page': str(page), 'pageSize': str(page_size),
+    }
+    resp = session.post(HNZC_LIST_URL, data=data, timeout=15)
+    return resp.json()
+
+
+def _fetch_hnzc_detail(session: requests.Session, notice_id, notice_category_code: str) -> dict:
+    """抓取湖南政采详情 HTML，用 regex 提取关键字段。"""
+    try:
+        resp = session.get(
+            HNZC_DETAIL_URL,
+            params={'noticeId': notice_id, 'area_id': '', 'isKJXY': 'null'},
+            timeout=15,
+        )
+        resp.encoding = 'utf-8'
+        html = resp.text
+
+        # 去掉 script/style 块
+        html = re.sub(r'<(script|style)[^>]*>.*?</\1>', '', html, flags=re.S)
+        # 去掉所有 HTML 标签
+        text = re.sub(r'<[^>]+>', '', html)
+        # 合并连续空白（保留换行以便定位章节）
+        text = re.sub(r'[ \t]+', ' ', text)
+
+        def _rex(pattern, default=''):
+            m = re.search(pattern, text, re.S)
+            return m.group(1).strip() if m else default
+
+        # 采购预算（两种写法均有）
+        budget = _rex(r'(?:采购项目预算|采购预算)[：:]\s*([\d,]+)元')
+
+        # 文件获取时间（第五章节 "有意参加投标者，于...至..."）
+        file_start = _rex(r'于(\d{4}年\d{1,2}月\d{1,2}日)\s*至')
+        file_end   = _rex(r'于.+?至(\d{4}年\d{1,2}月\d{1,2}日)')
+
+        # 开标时间（第六章节 "3、开标时间："）
+        open_bid = _rex(r'开标时间[：:]\s*(\d{4}年\d{1,2}月\d{1,2}日\s*\d{2}:\d{2})')
+
+        # 采购人电话（十一章 采购人信息 (5)电话）
+        purchaser_phone = _rex(r'1、采购人信息.+?（5）电\s+话[：:]\s*([^\s（\n]+)')
+
+        # 代理机构名称
+        agency_name = _rex(r'2、采购代理机构信息.+?（1）名\s+称[：:]\s*([^\n（]+)')
+
+        # 代理机构电话
+        agency_phone = _rex(r'2、采购代理机构信息.+?（5）电\s+话[：:]\s*([^\s（\n]+)')
+
+        return {
+            'budget': budget,
+            'file_start': file_start,
+            'file_end': file_end,
+            'open_bid': open_bid,
+            'purchaser_phone': purchaser_phone,
+            'agency_name': agency_name.strip(),
+            'agency_phone': agency_phone,
+        }
+    except Exception as e:
+        print(f'  [warn] 获取湖南详情失败 noticeId={notice_id}: {e}')
+        return {}
+
+
+def fetch_hnzc_bidding(
+    session: requests.Session,
+    target_date: str,
+    keywords: list,
+    exclude_kw: list,
+    high_value_kw: list,
+    fetch_detail: bool = True,
+) -> list:
+    """抓取湖南政府采购网指定日期的公告，先过滤关键词，再对匹配项查详情。"""
+    import math
+
+    print(f'[hnzc] 抓取日期 {target_date}，逐页获取列表...')
+
+    # 1. 翻页抓取
+    raw_rows = []
+    page = 1
+    total_pages = 1
+    while page <= total_pages:
+        print(f'  第 {page} 页...', end=' ', flush=True)
+        try:
+            result = _fetch_hnzc_page(session, target_date, page)
+        except Exception as e:
+            print(f'请求失败: {e}，停止')
+            break
+
+        rows = result.get('rows') or []
+        total = result.get('total') or 0
+        total_pages = math.ceil(total / 100) if total > 0 else 1
+        print(f'{len(rows)} 条 (共 {total} 条)')
+
+        raw_rows.extend(rows)
+        if len(rows) < 100 or page >= total_pages:
+            break
+        page += 1
+
+    print(f'[hnzc] 当日原始记录 {len(raw_rows)} 条，开始关键词过滤...')
+
+    # 2. 关键词过滤
+    filtered = []
+    for row in raw_rows:
+        title = row.get('NOTICE_TITLE', '') or ''
+        if any(ex in title for ex in exclude_kw):
+            continue
+        matched = [kw for kw in keywords if kw in title]
+        if not matched:
+            continue
+        row['_matched_kw'] = matched
+        filtered.append(row)
+
+    print(f'[hnzc] 过滤后剩余 {len(filtered)} 条，{"开始补全详情..." if fetch_detail else "跳过详情补全"}')
+
+    # 3. 构建记录
+    results = []
+    for idx, row in enumerate(filtered, 1):
+        notice_id   = row.get('NOTICE_ID', '')
+        cat_code    = row.get('NOTICE_CATEGORY_CODE', '')
+        title       = row.get('NOTICE_TITLE', '')
+        matched_kw  = row.get('_matched_kw', [])
+        publish_date = row.get('NEWWORK_DATE', '')
+
+        detail_link = f'{HNZC_PAGE_URL}?noticeId={notice_id}&noticeTypeCode={cat_code}'
+
+        record = {
+            '项目名称':        title,
+            '标段名称':        '',
+            '招标方式':        row.get('PRCM_MODE_NAME', ''),
+            '合同估价(元)':    '',
+            '文件获取开始时间': '',
+            '文件获取截止时间': '',
+            '开标时间':        '',
+            '采购人':          row.get('ORG_NAME', ''),
+            '采购人电话':      '',
+            '代理机构':        '',
+            '详情链接':        detail_link,
+            '发布日期':        publish_date,
+            '匹配关键词':      ','.join(matched_kw),
+            '推荐等级':        _get_recommendation(title, matched_kw, high_value_kw),
+            '备注':            _generate_remarks(title, matched_kw),
+        }
+
+        if fetch_detail:
+            print(f'  [{idx}/{len(filtered)}] 补全详情: {title[:30]}...')
+            d = _fetch_hnzc_detail(session, notice_id, cat_code)
+            record.update({
+                '合同估价(元)':    d.get('budget', ''),
+                '文件获取开始时间': d.get('file_start', ''),
+                '文件获取截止时间': d.get('file_end', ''),
+                '开标时间':        d.get('open_bid', ''),
+                '采购人电话':      d.get('purchaser_phone', ''),
+                '代理机构':        d.get('agency_name', ''),
+            })
+
+        results.append(record)
+
+    return results
 
 
 # ──────────────────────────────────────────────
@@ -404,17 +592,19 @@ def fetch_all_bidding(
     exclude_kw  = exclude_kw  or get_exclude_keywords()
     high_value_kw = high_value_kw or get_high_value_keywords()
 
-    session = _build_session()
-
+    bjzc_session = _build_session()
     bjzc_results = fetch_bjzc_bidding(
-        session, target_date, keywords, exclude_kw, high_value_kw, fetch_detail
+        bjzc_session, target_date, keywords, exclude_kw, high_value_kw, fetch_detail
     )
 
-    # 后续可在此处追加其他数据源，例如：
-    # other_results = fetch_other_site(session, target_date, ...)
+    hnzc_session = _build_hnzc_session()
+    hnzc_results = fetch_hnzc_bidding(
+        hnzc_session, target_date, keywords, exclude_kw, high_value_kw, fetch_detail
+    )
 
     return {
         '北京政采': bjzc_results,
+        '湖南政采': hnzc_results,
     }
 
 
