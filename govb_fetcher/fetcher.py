@@ -414,7 +414,7 @@ def fetch_all_bidding(
     # other_results = fetch_other_site(session, target_date, ...)
 
     return {
-        '北京中建云智政府采购网': bjzc_results,
+        '北京政采': bjzc_results,
     }
 
 
