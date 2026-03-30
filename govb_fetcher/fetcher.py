@@ -643,9 +643,22 @@ _HIGH_FILL = PatternFill(start_color='FFE699', end_color='FFE699', fill_type='so
 _MID_FILL  = PatternFill(start_color='D9E1F2', end_color='D9E1F2', fill_type='solid')
 
 
-def _write_sheet(ws, rows: list) -> None:
+def _active_columns(rows: list) -> list:
+    """返回至少有一行有值的列（序号列始终保留）。用于 --no-detail 模式。"""
+    result = []
+    for col_name, col_width in COLUMNS:
+        if col_name == '序号':
+            result.append((col_name, col_width))
+            continue
+        if any(record.get(col_name) for record in rows):
+            result.append((col_name, col_width))
+    return result
+
+
+def _write_sheet(ws, rows: list, columns: list = None) -> None:
+    cols = columns if columns is not None else COLUMNS
     # 表头
-    for col_idx, (col_name, col_width) in enumerate(COLUMNS, 1):
+    for col_idx, (col_name, col_width) in enumerate(cols, 1):
         cell = ws.cell(row=1, column=col_idx, value=col_name)
         cell.font = _HEADER_FONT
         cell.fill = _HEADER_FILL
@@ -660,7 +673,7 @@ def _write_sheet(ws, rows: list) -> None:
         row_fill = _HIGH_FILL if recommendation == '高' else (_MID_FILL if recommendation == '中' else None)
 
         ws.cell(row=row_idx, column=1, value=row_idx - 1)
-        for col_idx, (col_name, _) in enumerate(COLUMNS[1:], 2):
+        for col_idx, (col_name, _) in enumerate(cols[1:], 2):
             cell = ws.cell(row=row_idx, column=col_idx, value=record.get(col_name, ''))
             cell.alignment = _CELL_ALIGN
             cell.border = _THIN_BORDER
@@ -677,14 +690,15 @@ def _write_sheet(ws, rows: list) -> None:
     ws.freeze_panes = 'A2'
 
 
-def save_to_excel(all_results: dict, output_path: Path) -> None:
+def save_to_excel(all_results: dict, output_path: Path, no_detail: bool = False) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     wb = Workbook()
     wb.remove(wb.active)
 
     for sheet_name, rows in all_results.items():
         ws = wb.create_sheet(title=sheet_name[:31])  # sheet名最长31字符
-        _write_sheet(ws, rows)
+        cols = _active_columns(rows) if no_detail else COLUMNS
+        _write_sheet(ws, rows, cols)
 
     wb.save(output_path)
     print(f'\n[done] Excel 已保存: {output_path}')
@@ -839,7 +853,7 @@ def main() -> None:
         output_dir = get_output_dir()
         output_path = output_dir / f'政府采购商机汇总_{target_date}.xlsx'
 
-    save_to_excel(all_results, output_path)
+    save_to_excel(all_results, output_path, no_detail=args.no_detail)
 
 
 if __name__ == '__main__':
