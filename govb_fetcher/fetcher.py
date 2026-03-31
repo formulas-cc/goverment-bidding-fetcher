@@ -786,8 +786,8 @@ def main() -> None:
 
     # 日期参数（互斥）
     date_group = parser.add_mutually_exclusive_group()
-    date_group.add_argument('--today', action='store_true', help='抓取今日数据（默认）')
-    date_group.add_argument('--yesterday', action='store_true', help='抓取昨日数据')
+    date_group.add_argument('--today', action='store_true', help='抓取今日数据')
+    date_group.add_argument('--yesterday', action='store_true', help='抓取昨日数据（默认）')
     date_group.add_argument('--date', metavar='YYYY-MM-DD', help='抓取指定日期数据')
 
     # 过滤参数
@@ -809,13 +809,13 @@ def main() -> None:
         cmd_set_cookie(args.source, args.bearer, args.session)
         return
 
-    # 确定目标日期
-    if args.yesterday:
-        target_date = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+    # 确定目标日期（默认昨日）
+    if args.today:
+        target_date = datetime.now().strftime('%Y-%m-%d')
     elif args.date:
         target_date = args.date
     else:
-        target_date = datetime.now().strftime('%Y-%m-%d')
+        target_date = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
 
     # 关键词
     keywords        = [k.strip() for k in args.keywords.split(',')] if args.keywords else None
