@@ -29,7 +29,7 @@ DETAIL_BASE = 'http://zbcg-bjzc.zhongcy.com/bjczj-jy-toubiao/index.html'
 
 HNZC_LIST_URL   = 'http://www.ccgp-hunan.gov.cn/mvc/getNoticeList4Web.do'
 HNZC_DETAIL_URL = 'http://www.ccgp-hunan.gov.cn/mvc/viewNoticeContent.do'
-HNZC_PAGE_URL   = 'http://www.ccgp-hunan.gov.cn/page/notice/noticeDetail.jsp'
+HNZC_PAGE_URL   = 'http://www.ccgp-hunan.gov.cn/page/notice/notice.jsp'
 
 
 # ──────────────────────────────────────────────
@@ -561,9 +561,18 @@ def fetch_bjzc_bidding(
 
             record = dict(base_record)
             contract_price = bd.get('bdHeTongGuJia')
+            # 接口返回单位为分，转换为元并格式化为逗号分隔
+            if contract_price:
+                try:
+                    yuan = int(contract_price) // 100
+                    contract_price_fmt = f'{yuan:,}'
+                except (ValueError, TypeError):
+                    contract_price_fmt = str(contract_price)
+            else:
+                contract_price_fmt = ''
             record.update({
                 '标段名称': bd.get('bdName') or base_record['标段名称'],
-                '合同估价(元)': contract_price if contract_price else '',
+                '合同估价(元)': contract_price_fmt,
                 '文件获取开始时间': file_start,
                 '文件获取截止时间': file_end,
                 '开标时间': open_bid,
