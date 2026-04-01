@@ -21,7 +21,7 @@ from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from govb_fetcher.config import (
     get_keywords, get_exclude_keywords, get_high_value_keywords,
     get_bjzc_bearer_token, get_bjzc_tbsession, get_bjzc_jsessionid, get_bjzc_alb_route,
-    get_output_dir, save_to_env,
+    get_output_dir, save_to_env, get_proxies,
 )
 
 BASE_URL = 'http://zbcg-bjzc.zhongcy.com/gt-jy-toubiao/api'
@@ -38,6 +38,9 @@ HNZC_PAGE_URL   = 'http://www.ccgp-hunan.gov.cn/page/notice/notice.jsp'
 
 def _build_session() -> requests.Session:
     session = requests.Session()
+    proxies = get_proxies()
+    if proxies:
+        session.proxies.update(proxies)
     session.cookies.update({
         'YGCG_TBSESSION': get_bjzc_tbsession(),
         'JSESSIONID': get_bjzc_jsessionid(),
@@ -209,6 +212,9 @@ def _extract_field(d: dict, *keys) -> str:
 
 def _build_hnzc_session() -> requests.Session:
     session = requests.Session()
+    proxies = get_proxies()
+    if proxies:
+        session.proxies.update(proxies)
     session.headers.update({
         'Accept': 'application/json, text/javascript, */*; q=0.01',
         'Accept-Encoding': 'gzip, deflate',

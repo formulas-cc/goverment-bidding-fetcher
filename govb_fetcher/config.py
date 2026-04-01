@@ -15,12 +15,15 @@
 import os
 import re
 from pathlib import Path
+from typing import Optional
 
 DEFAULTS = {
     'FETCHER_KEYWORDS': '体系,模型,仿真,数据,决策,规划,分析,智能,AI,软件,系统,信息,算法,效能',
     'FETCHER_EXCLUDE_KEYWORDS': '体能,训练鞋,鞋类,服装,被装,医疗,药品,器械,膝关节,光纤,电梯,物业,绿化,装修,工程,建材,食材,食品,副食',
     'FETCHER_HIGH_VALUE_KEYWORDS': '模型,仿真,数据,决策,分析,智能,AI,软件,意向',
     'FETCHER_OUTPUT_DIR': '~/.openclaw/workspace/govb-bidding',
+    'FETCHER_USE_PROXY': 'false',
+    'FETCHER_PROXY': '',
     # 凭证类不设默认值，必须由用户通过 --set-cookie 或 .env 提供
 }
 
@@ -85,6 +88,17 @@ def get_high_value_keywords() -> list:
 
 def get_output_dir() -> Path:
     return Path(get_config('FETCHER_OUTPUT_DIR')).expanduser()
+
+
+def get_proxies() -> Optional[dict]:
+    """返回 requests 用的 proxies 字典，FETCHER_USE_PROXY=true 时生效，否则返回 None。"""
+    use_proxy = get_config('FETCHER_USE_PROXY', 'false').lower() == 'true'
+    if not use_proxy:
+        return None
+    proxy_url = get_config('FETCHER_PROXY')
+    if not proxy_url:
+        return None
+    return {'http': proxy_url, 'https': proxy_url}
 
 
 # ── 北京中建云智（BJZC）凭证 ───────────────────

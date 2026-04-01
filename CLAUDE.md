@@ -62,6 +62,7 @@ SKILL.md          # openClaw skill 定义（触发词、用法说明）
 变量命名规范：`FETCHER_{SOURCE}_{PARAM}`
 
 - 通用参数：`FETCHER_KEYWORDS` / `FETCHER_EXCLUDE_KEYWORDS` / `FETCHER_HIGH_VALUE_KEYWORDS` / `FETCHER_OUTPUT_DIR`
+- 代理：`FETCHER_USE_PROXY`（`true`/`false`，默认 `false`）/ `FETCHER_PROXY`（格式 `http://user:pass@host:port`）
 - 北京政采凭证：`FETCHER_BJZC_BEARER_TOKEN` / `FETCHER_BJZC_TBSESSION` / `FETCHER_BJZC_JSESSIONID` / `FETCHER_BJZC_ALB_ROUTE`
 
 优先级（高→低）：环境变量 > 当前目录 `.env` > `~/.config/govb-fetcher/.env` > 硬编码默认值（仅关键词）
