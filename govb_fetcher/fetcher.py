@@ -10,6 +10,8 @@ import os
 import re
 import sys
 import time
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, date, timedelta
 from pathlib import Path
 from typing import Optional
@@ -23,6 +25,9 @@ from govb_fetcher.config import (
     get_bjzc_bearer_token, get_bjzc_tbsession, get_bjzc_jsessionid, get_bjzc_alb_route,
     get_output_dir, save_to_env, get_proxies,
 )
+
+_DETAIL_WORKERS = 5       # 详情并发数，避免触发服务端限速
+_PRINT_LOCK = threading.Lock()
 
 BASE_URL = 'http://zbcg-bjzc.zhongcy.com/gt-jy-toubiao/api'
 DETAIL_BASE = 'http://zbcg-bjzc.zhongcy.com/bjczj-jy-toubiao/index.html'
@@ -347,18 +352,14 @@ def fetch_hnzc_bidding(
 
     print(f'[hnzc] 过滤后剩余 {len(filtered)} 条，{"开始补全详情..." if fetch_detail else "跳过详情补全"}')
 
-    # 3. 构建记录
-    results = []
-    for idx, row in enumerate(filtered, 1):
-        notice_id   = row.get('NOTICE_ID', '')
-        cat_code    = row.get('NOTICE_CATEGORY_CODE', '')
-        title       = row.get('NOTICE_TITLE', '')
-        matched_kw  = row.get('_matched_kw', [])
-        publish_date = row.get('NEWWORK_DATE', '')
-
-        detail_link = f'{HNZC_PAGE_URL}?noticeId={notice_id}&noticeTypeCode={cat_code}'
-
-        record = {
+    # 3. 构建基础记录
+    def _build_base(row: dict) -> dict:
+        notice_id    = row.get('NOTICE_ID', '')
+        cat_code     = row.get('NOTICE_CATEGORY_CODE', '')
+        title        = row.get('NOTICE_TITLE', '')
+        matched_kw   = row.get('_matched_kw', [])
+        detail_link  = f'{HNZC_PAGE_URL}?noticeId={notice_id}&noticeTypeCode={cat_code}'
+        return {
             '项目名称':        title,
             '标段名称':        '',
             '招标方式':        row.get('PRCM_MODE_NAME', ''),
@@ -370,27 +371,41 @@ def fetch_hnzc_bidding(
             '采购人电话':      '',
             '代理机构':        '',
             '详情链接':        detail_link,
-            '发布日期':        publish_date,
+            '发布日期':        row.get('NEWWORK_DATE', ''),
             '匹配关键词':      ','.join(matched_kw),
             '推荐等级':        _get_recommendation(title, matched_kw, high_value_kw),
             '备注':            _generate_remarks(title, matched_kw),
         }
 
-        if fetch_detail:
-            print(f'  [{idx}/{len(filtered)}] 补全详情: {title[:30]}...')
-            d = _fetch_hnzc_detail(session, notice_id, cat_code)
-            record.update({
-                '合同估价(元)':    d.get('budget', ''),
-                '文件获取开始时间': d.get('file_start', ''),
-                '文件获取截止时间': d.get('file_end', ''),
-                '开标时间':        d.get('open_bid', ''),
-                '采购人电话':      d.get('purchaser_phone', ''),
-                '代理机构':        d.get('agency_name', ''),
-            })
+    if not fetch_detail:
+        return [_build_base(row) for row in filtered]
 
-        results.append(record)
+    # 并行补全详情
+    def _fetch_one(args):
+        i, row = args
+        notice_id = row.get('NOTICE_ID', '')
+        cat_code  = row.get('NOTICE_CATEGORY_CODE', '')
+        title     = row.get('NOTICE_TITLE', '')
+        record    = _build_base(row)
+        d = _fetch_hnzc_detail(session, notice_id, cat_code)
+        record.update({
+            '合同估价(元)':    d.get('budget', ''),
+            '文件获取开始时间': d.get('file_start', ''),
+            '文件获取截止时间': d.get('file_end', ''),
+            '开标时间':        d.get('open_bid', ''),
+            '采购人电话':      d.get('purchaser_phone', ''),
+            '代理机构':        d.get('agency_name', ''),
+        })
+        with _PRINT_LOCK:
+            print(f'  [{i + 1}/{len(filtered)}] 完成: {title[:30]}...')
+        return i, record
 
-    return results
+    ordered: list = [None] * len(filtered)
+    with ThreadPoolExecutor(max_workers=_DETAIL_WORKERS) as executor:
+        for i, record in executor.map(_fetch_one, enumerate(filtered)):
+            ordered[i] = record
+
+    return [r for r in ordered if r is not None]
 
 
 # ──────────────────────────────────────────────
@@ -457,6 +472,77 @@ def _generate_remarks(title: str, matched_kw: list) -> str:
 # 北京中建云智 主抓取流程
 # ──────────────────────────────────────────────
 
+def _fetch_bjzc_detail_for_row(row: dict, high_value_kw: list) -> list:
+    """在独立 session 中补全单条 bjzc 记录的详情，返回标段记录列表（一条公告可能有多个标段）。"""
+    session = _build_session()
+    gg_guid = row.get('ggGuid', '')
+    gc_guid = row.get('gcGuid', '')
+    title = row.get('ggName', '')
+    matched_kw = row.get('_matched_kw', [])
+    publish_date = _ts_to_date(row.get('ggStartTime'))
+
+    base_record = {
+        '项目名称': title,
+        '标段名称': row.get('bdNames', ''),
+        '招标方式': row.get('zbFangShiName', ''),
+        '合同估价(元)': '',
+        '文件获取开始时间': '',
+        '文件获取截止时间': '',
+        '开标时间': '',
+        '采购人': '',
+        '采购人电话': '',
+        '代理机构': '',
+        '详情链接': '',
+        '发布日期': publish_date,
+        '匹配关键词': ','.join(matched_kw),
+        '推荐等级': _get_recommendation(title, matched_kw, high_value_kw),
+        '备注': _generate_remarks(title, matched_kw),
+    }
+
+    bd_list = _fetch_bjzc_gg_bd_list(session, gg_guid)
+    if not bd_list:
+        bd_list = [{}]
+
+    purchaser_info = _fetch_bjzc_purchaser_info(session, gc_guid) if gc_guid else {}
+    purchaser_name  = purchaser_info.get('zbRName', '')
+    purchaser_phone = purchaser_info.get('lianXiRenPhone', '')
+    agency_name     = purchaser_info.get('zbDLName', '')
+    agency_phone    = (purchaser_info.get('zbDLZBFuZeRenMobile')
+                       or purchaser_info.get('zbDLZBFuZeRenPhone') or '')
+
+    records = []
+    for bd in bd_list:
+        bd_guid = bd.get('bdGuid', '')
+        file_start = _ts_to_datetime(bd.get('zbWJHuoQuStartTime'))
+        file_end   = _ts_to_datetime(bd.get('zbWJHuoQuEndTime'))
+        open_bid   = _ts_to_datetime(bd.get('kbTime'))
+        detail_url = _build_detail_url(bd_guid, gc_guid, gg_guid) if bd_guid else ''
+
+        record = dict(base_record)
+        contract_price = bd.get('bdHeTongGuJia')
+        if contract_price:
+            try:
+                yuan = int(contract_price) // 100
+                contract_price_fmt = f'{yuan:,}'
+            except (ValueError, TypeError):
+                contract_price_fmt = str(contract_price)
+        else:
+            contract_price_fmt = ''
+        record.update({
+            '标段名称': bd.get('bdName') or base_record['标段名称'],
+            '合同估价(元)': contract_price_fmt,
+            '文件获取开始时间': file_start,
+            '文件获取截止时间': file_end,
+            '开标时间': open_bid,
+            '采购人': purchaser_name,
+            '采购人电话': purchaser_phone,
+            '代理机构': agency_name,
+            '详情链接': detail_url,
+        })
+        records.append(record)
+    return records
+
+
 def fetch_bjzc_bidding(
     session: requests.Session,
     target_date: str,
@@ -509,86 +595,48 @@ def fetch_bjzc_bidding(
     print(f'[bjzc] 过滤后剩余 {len(filtered)} 条，{"开始补全详情..." if fetch_detail else "跳过详情补全"}')
 
     # 3. 详情补全
-    results = []
-    for idx, row in enumerate(filtered, 1):
-        gg_guid = row.get('ggGuid', '')
-        gc_guid = row.get('gcGuid', '')
-        title = row.get('ggName', '')
-        matched_kw = row.get('_matched_kw', [])
-        publish_date = _ts_to_date(row.get('ggStartTime'))
-
-        base_record = {
-            '项目名称': title,
-            '标段名称': row.get('bdNames', ''),
-            '招标方式': row.get('zbFangShiName', ''),
-            '合同估价(元)': '',
-            '文件获取开始时间': '',
-            '文件获取截止时间': '',
-            '开标时间': '',
-            '采购人': '',
-            '采购人电话': '',
-            '代理机构': '',
-            '详情链接': '',
-            '发布日期': publish_date,
-            '匹配关键词': ','.join(matched_kw),
-            '推荐等级': _get_recommendation(title, matched_kw, high_value_kw),
-            '备注': _generate_remarks(title, matched_kw),
-        }
-
-        if not fetch_detail:
-            results.append(base_record)
-            continue
-
-        print(f'  [{idx}/{len(filtered)}] 补全详情: {title[:30]}...')
-
-        # Step1: queryGgBdList — 分包列表 + 文件获取时间 + 开标时间
-        bd_list = _fetch_bjzc_gg_bd_list(session, gg_guid)
-        if not bd_list:
-            bd_list = [{}]
-
-        # Step2: queryPurchaserInfo — 采购人 + 代理机构（每个公告只查一次）
-        purchaser_info = _fetch_bjzc_purchaser_info(session, gc_guid) if gc_guid else {}
-        purchaser_name  = purchaser_info.get('zbRName', '')
-        purchaser_phone = purchaser_info.get('lianXiRenPhone', '')
-        agency_name     = purchaser_info.get('zbDLName', '')
-        # 代理机构电话：优先手机，其次座机
-        agency_phone = (purchaser_info.get('zbDLZBFuZeRenMobile')
-                        or purchaser_info.get('zbDLZBFuZeRenPhone') or '')
-
-        for bd in bd_list:
-            bd_guid = bd.get('bdGuid', '')
-
-            # 从 queryGgBdList 响应直接取时间字段（毫秒时间戳）
-            file_start = _ts_to_datetime(bd.get('zbWJHuoQuStartTime'))
-            file_end   = _ts_to_datetime(bd.get('zbWJHuoQuEndTime'))
-            open_bid   = _ts_to_datetime(bd.get('kbTime'))
-
-            detail_url = _build_detail_url(bd_guid, gc_guid, gg_guid) if bd_guid else ''
-
-            record = dict(base_record)
-            contract_price = bd.get('bdHeTongGuJia')
-            # 接口返回单位为分，转换为元并格式化为逗号分隔
-            if contract_price:
-                try:
-                    yuan = int(contract_price) // 100
-                    contract_price_fmt = f'{yuan:,}'
-                except (ValueError, TypeError):
-                    contract_price_fmt = str(contract_price)
-            else:
-                contract_price_fmt = ''
-            record.update({
-                '标段名称': bd.get('bdName') or base_record['标段名称'],
-                '合同估价(元)': contract_price_fmt,
-                '文件获取开始时间': file_start,
-                '文件获取截止时间': file_end,
-                '开标时间': open_bid,
-                '采购人': purchaser_name,
-                '采购人电话': purchaser_phone,
-                '代理机构': agency_name,
-                '详情链接': detail_url,
+    if not fetch_detail:
+        results = []
+        for row in filtered:
+            title = row.get('ggName', '')
+            matched_kw = row.get('_matched_kw', [])
+            results.append({
+                '项目名称': title,
+                '标段名称': row.get('bdNames', ''),
+                '招标方式': row.get('zbFangShiName', ''),
+                '合同估价(元)': '',
+                '文件获取开始时间': '',
+                '文件获取截止时间': '',
+                '开标时间': '',
+                '采购人': '',
+                '采购人电话': '',
+                '代理机构': '',
+                '详情链接': '',
+                '发布日期': _ts_to_date(row.get('ggStartTime')),
+                '匹配关键词': ','.join(matched_kw),
+                '推荐等级': _get_recommendation(title, matched_kw, high_value_kw),
+                '备注': _generate_remarks(title, matched_kw),
             })
-            results.append(record)
+        return results
 
+    # 并行补全详情
+    ordered: list = [None] * len(filtered)
+    with ThreadPoolExecutor(max_workers=_DETAIL_WORKERS) as executor:
+        future_to_idx = {
+            executor.submit(_fetch_bjzc_detail_for_row, row, high_value_kw): i
+            for i, row in enumerate(filtered)
+        }
+        for future in as_completed(future_to_idx):
+            i = future_to_idx[future]
+            title = filtered[i].get('ggName', '')
+            with _PRINT_LOCK:
+                print(f'  [{i + 1}/{len(filtered)}] 完成: {title[:30]}...')
+            ordered[i] = future.result()
+
+    results = []
+    for records in ordered:
+        if records:
+            results.extend(records)
     return results
 
 
@@ -607,15 +655,21 @@ def fetch_all_bidding(
     exclude_kw  = exclude_kw  or get_exclude_keywords()
     high_value_kw = high_value_kw or get_high_value_keywords()
 
-    bjzc_session = _build_session()
-    bjzc_results = fetch_bjzc_bidding(
-        bjzc_session, target_date, keywords, exclude_kw, high_value_kw, fetch_detail
-    )
+    def _run_bjzc():
+        return fetch_bjzc_bidding(
+            _build_session(), target_date, keywords, exclude_kw, high_value_kw, fetch_detail
+        )
 
-    hnzc_session = _build_hnzc_session()
-    hnzc_results = fetch_hnzc_bidding(
-        hnzc_session, target_date, keywords, exclude_kw, high_value_kw, fetch_detail
-    )
+    def _run_hnzc():
+        return fetch_hnzc_bidding(
+            _build_hnzc_session(), target_date, keywords, exclude_kw, high_value_kw, fetch_detail
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        f_bjzc = executor.submit(_run_bjzc)
+        f_hnzc = executor.submit(_run_hnzc)
+        bjzc_results = f_bjzc.result()
+        hnzc_results = f_hnzc.result()
 
     return {
         '北京政采': bjzc_results,

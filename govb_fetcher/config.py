@@ -14,6 +14,7 @@
 
 import os
 import re
+import threading
 from pathlib import Path
 from typing import Optional
 
@@ -28,6 +29,7 @@ DEFAULTS = {
 }
 
 _config_cache: dict = {}
+_env_lock = threading.Lock()
 
 
 def _load_env_file(path: Path) -> dict:
@@ -132,8 +134,13 @@ def get_env_path() -> Path:
 def save_to_env(updates: dict) -> Path:
     """
     将 updates 中的 key=value 写入 .env（存在则替换，不存在则追加）。
-    不影响其他已有配置项。返回写入的文件路径。
+    不影响其他已有配置项。返回写入的文件路径。线程安全。
     """
+    with _env_lock:
+        return _save_to_env_unsafe(updates)
+
+
+def _save_to_env_unsafe(updates: dict) -> Path:
     env_path = get_env_path()
 
     if not env_path.exists():
