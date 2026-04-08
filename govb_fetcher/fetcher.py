@@ -436,7 +436,7 @@ def _get_recommendation(title: str, matched_kw: list, high_value_kw: list) -> st
         return '高'
     if '系统' in matched_kw:
         return '中'
-    return ''
+    return '低'
 
 
 def _generate_remarks(title: str, matched_kw: list) -> str:
@@ -694,6 +694,7 @@ _THIN_BORDER  = Border(
 )
 _HIGH_FILL = PatternFill(start_color='FFE699', end_color='FFE699', fill_type='solid')
 _MID_FILL  = PatternFill(start_color='D9E1F2', end_color='D9E1F2', fill_type='solid')
+_LOW_FILL  = PatternFill(start_color='E2EFDA', end_color='E2EFDA', fill_type='solid')
 
 
 def _active_columns(rows: list) -> list:
@@ -723,7 +724,9 @@ def _write_sheet(ws, rows: list, columns: list = None) -> None:
     # 数据行
     for row_idx, record in enumerate(rows, 2):
         recommendation = record.get('推荐等级', '')
-        row_fill = _HIGH_FILL if recommendation == '高' else (_MID_FILL if recommendation == '中' else None)
+        row_fill = (_HIGH_FILL if recommendation == '高' else
+                    _MID_FILL  if recommendation == '中' else
+                    _LOW_FILL  if recommendation == '低' else None)
 
         ws.cell(row=row_idx, column=1, value=row_idx - 1)
         for col_idx, (col_name, _) in enumerate(cols[1:], 2):
